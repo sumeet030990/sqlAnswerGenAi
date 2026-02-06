@@ -1,0 +1,8 @@
+streamlit
+langchain
+openai
+python-dotenv
+langchain-community
+PyMySQL
+groq
+langchain-groq
