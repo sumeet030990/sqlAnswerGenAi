@@ -36,6 +36,7 @@ from sqlalchemy import create_engine
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 import os
+from langchain_community.chat_models import ChatOllama
 
 load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
@@ -72,9 +73,15 @@ user = st.sidebar.text_input("User", value="root")
 password = st.sidebar.text_input("Password", type="password", value="password")
 database = st.sidebar.text_input("Database", value="poornah-capital")
 
-# Groq API key for accessing the LLM
-# This key is required to use Groq's language models
-groq_api_key = st.sidebar.text_input("Groq API Key", type="password", value=groq_api_key)
+llm_type_radio_options = ["ollama","groq"]
+selected_llm_type = st.sidebar.radio("Select LLM Type", llm_type_radio_options)
+
+if selected_llm_type == "groq":
+  # Groq API key for accessing the LLM
+  # This key is required to use Groq's language models
+  groq_api_key = st.sidebar.text_input("Groq API Key", type="password", value=groq_api_key)
+else:
+  ollama_model = st.sidebar.markdown("Running on Ollama Model: llama3.2:latest from local")
 
 # ============================================================================
 # INPUT VALIDATION
@@ -100,7 +107,12 @@ if not host or not port or not database or not user or not password:
 # Initialize the ChatGroq LLM with streaming enabled
 # Model: llama-3.3-70b-versatile - A powerful language model for understanding and generating text
 # Streaming: True - Enables real-time response streaming for better UX
-llm=ChatGroq(api_key=groq_api_key, model="llama-3.3-70b-versatile", streaming=True)
+if selected_llm_type == "groq":
+  llm=ChatGroq(api_key=groq_api_key, model="llama-3.3-70b-versatile", streaming=True)
+else:
+  # For Ollama, use temperature=0 for more deterministic, format-compliant responses
+  llm = ChatOllama(model="llama3.2:latest", temperature=0)
+
 
 
 # ============================================================================
@@ -167,15 +179,35 @@ toolkit = SQLDatabaseToolkit(db=db, llm=llm)
 # - llm: The language model to use for understanding queries
 # - toolkit: Tools for interacting with the database
 # - verbose: Show detailed agent reasoning (useful for debugging)
-# - handle_parsing_errors: Gracefully handle errors in parsing agent output
-# - agent: "zero-shot-react-description" - Agent type that reasons about actions without examples
-agent = create_sql_agent(
-    llm=llm,
-    toolkit=toolkit,
-    verbose=True,
-    handle_parsing_errors=True,
-    agent="zero-shot-react-description"
-) 
+# - agent_type: "zero-shot-react-description" - Agent type that reasons about actions without examples
+# - agent_executor_kwargs: Additional kwargs passed to the AgentExecutor
+#   - handle_parsing_errors: Gracefully handle errors in parsing agent output (critical for Ollama)
+#   - max_iterations: Limit iterations to prevent infinite loops with Ollama
+#   - max_execution_time: Timeout after 60 seconds
+
+# For Ollama, we need stricter guidance and limits due to formatting issues
+if selected_llm_type == "ollama":
+    agent = create_sql_agent(
+        llm=llm,
+        toolkit=toolkit,
+        verbose=True,
+        agent_type="zero-shot-react-description",
+        max_iterations=5,
+        max_execution_time=60,
+        agent_executor_kwargs={
+            "handle_parsing_errors": True,
+            "return_intermediate_steps": False
+        },
+    )
+else:
+    # Groq models work better with the standard configuration
+    agent = create_sql_agent(
+        llm=llm,
+        toolkit=toolkit,
+        verbose=True,
+        agent_type="zero-shot-react-description",
+        agent_executor_kwargs={"handle_parsing_errors": True}
+    ) 
 
 
 # ============================================================================
@@ -205,6 +237,7 @@ for message in st.session_state.messages:
 
 # Chat input widget - captures user's question about the database
 # The walrus operator (:=) assigns the input to 'prompt' and checks if it's not empty
+# User realtionship with other tables?
 if prompt := st.chat_input("Ask a question about your database"):
   # Add user message to chat history
   st.session_state.messages.append({"role": "user", "content": prompt})
